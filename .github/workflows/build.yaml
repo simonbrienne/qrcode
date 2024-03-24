@@ -1,0 +1,58 @@
+name: Build and Push Docker image to GCR
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.SERVICE_ACCOUNT_KEY }}'
+
+    - name: Set up Cloud SDK
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: Use gcloud CLI
+      run: gcloud info
+
+    - name: Check if Artifact Registry Docker repository exists
+      id: check_repo
+      run: |
+        set +e
+        output=$(gcloud artifacts repositories describe containers --location=europe-west1 2>&1)
+        result=$?
+        set -e
+        if [ $result -eq 0 ]; then
+          echo "Repository exists. Skipping creation."
+          echo "exists=true" >> $GITHUB_ENV
+        else
+          echo "Repository does not exist."
+          echo "exists=false" >> $GITHUB_ENV
+        fi
+
+    - name: Create Artifact Registry Docker repository
+      if: env.exists == 'false'
+      run: gcloud artifacts repositories create containers --repository-format=docker --location=europe-west1 --description="Docker repository"
+
+    # - name: Grant Artifact Registry Administrator role to the GitHub Actions service account
+    #   run: |
+    #     gcloud artifacts repositories add-iam-policy-binding containers \
+    #       --location=europe-west1 \
+    #       --member=serviceAccount:githubactions@${{ vars.PROJECT_ID }}.iam.gserviceaccount.com \
+    #       --role=roles/artifactregistry.admin
+
+    - name: Configure Docker
+      run: gcloud auth configure-docker europe-west1-docker.pkg.dev
+
+    - name: Build and push Docker image
+      run: |
+        docker build -t ${{ vars.REGISTRY_URL }}/sample-app-cicd:latest . --platform linux/amd64
+        docker push ${{ vars.REGISTRY_URL }}/sample-app-cicd:latest
